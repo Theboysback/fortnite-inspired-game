@@ -30,20 +30,26 @@ scene.add(ground);
 const player = {
   position: new THREE.Vector3(0, 1.2, 0),
   velocity: new THREE.Vector3(0, 0, 0),
-  radius: 0.8,
   speed: 11,
   jump: 11,
   health: 100
 };
 
-const playerMesh = new THREE.Mesh(
-  new THREE.CapsuleGeometry(0.65, 1.6, 8, 16),
+const playerBody = new THREE.Mesh(
+  new THREE.CylinderGeometry(0.6, 0.7, 1.8, 18),
   new THREE.MeshStandardMaterial({ color: 0x2288ff })
 );
-playerMesh.position.copy(player.position);
-playerMesh.castShadow = true;
-playerMesh.receiveShadow = true;
-scene.add(playerMesh);
+playerBody.position.copy(player.position);
+playerBody.castShadow = true;
+playerBody.receiveShadow = true;
+scene.add(playerBody);
+
+const playerHead = new THREE.Mesh(
+  new THREE.SphereGeometry(0.45, 18, 18),
+  new THREE.MeshStandardMaterial({ color: 0x9ed0ff })
+);
+playerHead.position.set(0, 1.6, 0);
+scene.add(playerHead);
 
 const keys = {};
 const mouse = { down: false, locked: false };
@@ -53,7 +59,6 @@ let lastShot = 0;
 let gameOver = false;
 let yaw = 0;
 let pitch = 0;
-
 const enemies = [];
 const bullets = [];
 const walls = [];
@@ -68,18 +73,27 @@ function spawnEnemies() {
   for (let i = 0; i < 8; i++) {
     const angle = Math.random() * Math.PI * 2;
     const distance = 25 + Math.random() * 60;
-    const mesh = new THREE.Mesh(
-      new THREE.CapsuleGeometry(0.55, 1.6, 8, 16),
+
+    const body = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.5, 0.6, 1.7, 16),
       new THREE.MeshStandardMaterial({ color: 0xe53935 })
     );
-    mesh.position.set(Math.cos(angle) * distance, 1.2, Math.sin(angle) * distance);
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-    scene.add(mesh);
+    body.position.set(Math.cos(angle) * distance, 1.1, Math.sin(angle) * distance);
+    body.castShadow = true;
+    body.receiveShadow = true;
+    scene.add(body);
+
+    const head = new THREE.Mesh(
+      new THREE.SphereGeometry(0.4, 16, 16),
+      new THREE.MeshStandardMaterial({ color: 0xffa0a0 })
+    );
+    head.position.set(body.position.x, body.position.y + 1.2, body.position.z);
+    scene.add(head);
 
     enemies.push({
-      mesh,
-      position: mesh.position.clone(),
+      body,
+      head,
+      position: body.position.clone(),
       hp: 30,
       speed: 3.4,
       lastAttack: 0
@@ -88,7 +102,7 @@ function spawnEnemies() {
 }
 
 function shoot() {
-  if (ammo <= 0 || performance.now() - lastShot < 140) return;
+  if (ammo <= 0 || performance.now() - lastShot < 150) return;
   lastShot = performance.now();
   ammo--;
 
@@ -137,7 +151,6 @@ function gameOverScreen() {
 function update(dt) {
   if (gameOver) return;
 
-  // movement
   const move = new THREE.Vector3();
   if (keys['w']) move.z -= 1;
   if (keys['s']) move.z += 1;
@@ -169,9 +182,11 @@ function update(dt) {
   camera.rotation.y = yaw;
   camera.rotation.x = pitch;
 
+  playerBody.position.copy(player.position);
+  playerHead.position.set(player.position.x, player.position.y + 1.6, player.position.z);
+
   if (mouse.down) shoot();
 
-  // bullets
   for (let i = bullets.length - 1; i >= 0; i--) {
     const b = bullets[i];
     b.position.addScaledVector(b.direction, b.speed * dt);
@@ -186,13 +201,14 @@ function update(dt) {
 
     for (let j = enemies.length - 1; j >= 0; j--) {
       const e = enemies[j];
-      if (b.position.distanceTo(e.position) < 1.4) {
+      if (b.position.distanceTo(e.position) < 1.5) {
         e.hp -= 15;
         scene.remove(b.mesh);
         bullets.splice(i, 1);
 
         if (e.hp <= 0) {
-          scene.remove(e.mesh);
+          scene.remove(e.body);
+          scene.remove(e.head);
           enemies.splice(j, 1);
           kills++;
           updateUI();
@@ -202,14 +218,14 @@ function update(dt) {
     }
   }
 
-  // enemies
   for (const e of enemies) {
     const toPlayer = player.position.clone().sub(e.position);
     const dist = toPlayer.length();
     if (dist > 0.1) {
       toPlayer.normalize();
       e.position.addScaledVector(toPlayer, e.speed * dt);
-      e.mesh.position.copy(e.position);
+      e.body.position.copy(e.position);
+      e.head.position.set(e.position.x, e.position.y + 1.2, e.position.z);
     }
 
     if (dist < 1.8 && performance.now() - e.lastAttack > 800) {
@@ -222,10 +238,6 @@ function update(dt) {
   if (player.health <= 0) {
     gameOverScreen();
   }
-}
-
-function render() {
-  renderer.render(scene, camera);
 }
 
 window.addEventListener('keydown', (event) => {
@@ -275,11 +287,12 @@ updateUI();
 
 let lastTime = performance.now();
 function animate() {
-  requestAnimationFrame(animate);
   const now = performance.now();
   const dt = Math.min((now - lastTime) / 1000, 0.033);
   lastTime = now;
   update(dt);
-  render();
+  renderer.render(scene, camera);
+  requestAnimationFrame(animate);
 }
+
 animate();
