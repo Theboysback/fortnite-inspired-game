@@ -1,150 +1,198 @@
-const canvas = document.getElementById('game');
-const ctx = canvas.getContext('2d');
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x7ec9ff);
+scene.fog = new THREE.Fog(0x7ec9ff, 40, 180);
 
-let width = window.innerWidth;
-let height = window.innerHeight;
-canvas.width = width;
-canvas.height = height;
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 500);
+camera.rotation.order = 'YXZ';
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+document.body.appendChild(renderer.domElement);
+
+const ambientLight = new THREE.HemisphereLight(0xffffff, 0x567d46, 1.2);
+scene.add(ambientLight);
+
+const sun = new THREE.DirectionalLight(0xffffff, 1.0);
+sun.position.set(25, 40, 20);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+scene.add(sun);
+
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(220, 220),
+  new THREE.MeshStandardMaterial({ color: 0x4e8b3d })
+);
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+const player = {
+  position: new THREE.Vector3(0, 1.2, 0),
+  velocity: new THREE.Vector3(0, 0, 0),
+  radius: 0.8,
+  speed: 11,
+  jump: 11,
+  health: 100
+};
+
+const playerMesh = new THREE.Mesh(
+  new THREE.CapsuleGeometry(0.65, 1.6, 8, 16),
+  new THREE.MeshStandardMaterial({ color: 0x2288ff })
+);
+playerMesh.position.copy(player.position);
+playerMesh.castShadow = true;
+playerMesh.receiveShadow = true;
+scene.add(playerMesh);
 
 const keys = {};
-const mouse = { x: 0, y: 0, down: false };
-
-let hp = 100;
+const mouse = { down: false, locked: false };
 let ammo = 30;
 let kills = 0;
-let gameOver = false;
-
-const player = { x: width / 2, y: height / 2, r: 16, speed: 200 };
-let enemies = [];
-let bullets = [];
-let walls = [];
 let lastShot = 0;
+let gameOver = false;
+let yaw = 0;
+let pitch = 0;
 
-// Spawn enemies
+const enemies = [];
+const bullets = [];
+const walls = [];
+
+function updateUI() {
+  document.getElementById('hp').textContent = Math.max(0, Math.round(player.health));
+  document.getElementById('ammo').textContent = ammo;
+  document.getElementById('kills').textContent = kills;
+}
+
 function spawnEnemies() {
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < 8; i++) {
     const angle = Math.random() * Math.PI * 2;
-    const dist = 150 + Math.random() * 200;
+    const distance = 25 + Math.random() * 60;
+    const mesh = new THREE.Mesh(
+      new THREE.CapsuleGeometry(0.55, 1.6, 8, 16),
+      new THREE.MeshStandardMaterial({ color: 0xe53935 })
+    );
+    mesh.position.set(Math.cos(angle) * distance, 1.2, Math.sin(angle) * distance);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    scene.add(mesh);
+
     enemies.push({
-      x: player.x + Math.cos(angle) * dist,
-      y: player.y + Math.sin(angle) * dist,
-      r: 12,
+      mesh,
+      position: mesh.position.clone(),
       hp: 30,
+      speed: 3.4,
       lastAttack: 0
     });
   }
 }
 
-spawnEnemies();
-
-// Input
-window.addEventListener('keydown', (e) => {
-  keys[e.key.toLowerCase()] = true;
-  if (e.key.toLowerCase() === 'q') buildWall();
-});
-
-window.addEventListener('keyup', (e) => {
-  keys[e.key.toLowerCase()] = false;
-});
-
-canvas.addEventListener('mousemove', (e) => {
-  mouse.x = e.clientX;
-  mouse.y = e.clientY;
-});
-
-canvas.addEventListener('mousedown', () => (mouse.down = true));
-window.addEventListener('mouseup', () => (mouse.down = false));
-
 function shoot() {
-  if (ammo <= 0 || Date.now() - lastShot < 100) return;
-  lastShot = Date.now();
+  if (ammo <= 0 || performance.now() - lastShot < 140) return;
+  lastShot = performance.now();
   ammo--;
 
-  const dx = mouse.x - player.x;
-  const dy = mouse.y - player.y;
-  const dist = Math.hypot(dx, dy);
+  const direction = new THREE.Vector3(0, 0, -1).applyEuler(camera.rotation);
+  const bullet = new THREE.Mesh(
+    new THREE.SphereGeometry(0.15, 12, 12),
+    new THREE.MeshStandardMaterial({ color: 0xffef00 })
+  );
+  bullet.position.copy(camera.position).addScaledVector(direction, 1.5);
+  scene.add(bullet);
 
   bullets.push({
-    x: player.x + (dx / dist) * 20,
-    y: player.y + (dy / dist) * 20,
-    vx: (dx / dist) * 500,
-    vy: (dy / dist) * 500,
-    life: 4
+    mesh: bullet,
+    direction: direction.clone(),
+    speed: 55,
+    life: 2.2,
+    position: bullet.position.clone()
   });
 
   updateUI();
 }
 
 function buildWall() {
-  const dx = mouse.x - player.x;
-  const dy = mouse.y - player.y;
-  const dist = Math.hypot(dx, dy);
-  if (dist === 0) return;
+  const dir = new THREE.Vector3(0, 0, -1).applyEuler(camera.rotation);
+  const pos = camera.position.clone().addScaledVector(dir, 4.5);
+  pos.y = 1.5;
 
-  walls.push({
-    x: player.x + (dx / dist) * 80,
-    y: player.y + (dy / dist) * 80,
-    w: 60,
-    h: 15
-  });
-}
+  const wall = new THREE.Mesh(
+    new THREE.BoxGeometry(3.2, 3.2, 0.5),
+    new THREE.MeshStandardMaterial({ color: 0xa86d29 })
+  );
+  wall.position.copy(pos);
+  wall.castShadow = true;
+  wall.receiveShadow = true;
+  scene.add(wall);
 
-function updateUI() {
-  document.getElementById('hp').textContent = Math.max(0, Math.round(hp));
-  document.getElementById('ammo').textContent = ammo;
-  document.getElementById('kills').textContent = kills;
+  walls.push({ mesh: wall, hp: 80, position: pos.clone() });
 }
 
 function gameOverScreen() {
   gameOver = true;
   document.getElementById('stats').textContent = `Kills: ${kills}`;
-  document.getElementById('over').style.display = 'flex';
+  document.getElementById('over').style.display = 'grid';
 }
 
 function update(dt) {
   if (gameOver) return;
 
-  // Player movement
-  let dx = 0;
-  let dy = 0;
-  if (keys['w']) dy -= 1;
-  if (keys['s']) dy += 1;
-  if (keys['a']) dx -= 1;
-  if (keys['d']) dx += 1;
+  // movement
+  const move = new THREE.Vector3();
+  if (keys['w']) move.z -= 1;
+  if (keys['s']) move.z += 1;
+  if (keys['a']) move.x -= 1;
+  if (keys['d']) move.x += 1;
 
-  const len = Math.hypot(dx, dy);
-  if (len > 0) {
-    player.x += (dx / len) * player.speed * dt;
-    player.y += (dy / len) * player.speed * dt;
+  if (move.lengthSq() > 0) {
+    move.normalize();
+    const yawMatrix = new THREE.Matrix4().makeRotationY(yaw);
+    move.applyMatrix4(yawMatrix);
+    const nextX = player.position.x + move.x * player.speed * dt;
+    const nextZ = player.position.z + move.z * player.speed * dt;
+    if (Math.abs(nextX) < 96) player.position.x = nextX;
+    if (Math.abs(nextZ) < 96) player.position.z = nextZ;
   }
 
-  // Keep player in bounds
-  player.x = Math.max(player.r, Math.min(width - player.r, player.x));
-  player.y = Math.max(player.r, Math.min(height - player.r, player.y));
+  player.velocity.y += -24 * dt;
+  player.position.y += player.velocity.y * dt;
+  if (player.position.y <= 1.2) {
+    player.position.y = 1.2;
+    player.velocity.y = 0;
+  }
 
-  // Shooting
+  if (keys[' '] && player.position.y <= 1.3) {
+    player.velocity.y = player.jump;
+  }
+
+  camera.position.set(player.position.x, player.position.y + 1.5, player.position.z);
+  camera.rotation.y = yaw;
+  camera.rotation.x = pitch;
+
   if (mouse.down) shoot();
 
-  // Update bullets
+  // bullets
   for (let i = bullets.length - 1; i >= 0; i--) {
     const b = bullets[i];
-    b.x += b.vx * dt;
-    b.y += b.vy * dt;
+    b.position.addScaledVector(b.direction, b.speed * dt);
+    b.mesh.position.copy(b.position);
     b.life -= dt;
 
     if (b.life <= 0) {
+      scene.remove(b.mesh);
       bullets.splice(i, 1);
       continue;
     }
 
-    // Check collision with enemies
     for (let j = enemies.length - 1; j >= 0; j--) {
       const e = enemies[j];
-      if (Math.hypot(b.x - e.x, b.y - e.y) < e.r + 5) {
+      if (b.position.distanceTo(e.position) < 1.4) {
         e.hp -= 15;
+        scene.remove(b.mesh);
         bullets.splice(i, 1);
 
         if (e.hp <= 0) {
+          scene.remove(e.mesh);
           enemies.splice(j, 1);
           kills++;
           updateUI();
@@ -154,101 +202,84 @@ function update(dt) {
     }
   }
 
-  // Update enemies
+  // enemies
   for (const e of enemies) {
-    const dx = player.x - e.x;
-    const dy = player.y - e.y;
-    const dist = Math.hypot(dx, dy);
-
-    if (dist > 30) {
-      e.x += (dx / dist) * 60 * dt;
-      e.y += (dy / dist) * 60 * dt;
+    const toPlayer = player.position.clone().sub(e.position);
+    const dist = toPlayer.length();
+    if (dist > 0.1) {
+      toPlayer.normalize();
+      e.position.addScaledVector(toPlayer, e.speed * dt);
+      e.mesh.position.copy(e.position);
     }
 
-    if (dist < 35 && Date.now() - e.lastAttack > 800) {
-      hp -= 7;
-      e.lastAttack = Date.now();
+    if (dist < 1.8 && performance.now() - e.lastAttack > 800) {
+      player.health -= 10;
+      e.lastAttack = performance.now();
       updateUI();
     }
   }
 
-  if (hp <= 0) gameOverScreen();
+  if (player.health <= 0) {
+    gameOverScreen();
+  }
 }
 
-function draw() {
-  ctx.fillStyle = '#1a3d2a';
-  ctx.fillRect(0, 0, width, height);
-
-  // Draw grid
-  ctx.strokeStyle = '#2d5a40';
-  ctx.lineWidth = 1;
-  for (let i = 0; i < width; i += 50) {
-    ctx.beginPath();
-    ctx.moveTo(i, 0);
-    ctx.lineTo(i, height);
-    ctx.stroke();
-  }
-  for (let i = 0; i < height; i += 50) {
-    ctx.beginPath();
-    ctx.moveTo(0, i);
-    ctx.lineTo(width, i);
-    ctx.stroke();
-  }
-
-  // Draw walls
-  ctx.fillStyle = '#8b6914';
-  for (const w of walls) {
-    ctx.fillRect(w.x - w.w / 2, w.y - w.h / 2, w.w, w.h);
-  }
-
-  // Draw enemies
-  ctx.fillStyle = '#c41e3a';
-  for (const e of enemies) {
-    ctx.beginPath();
-    ctx.arc(e.x, e.y, e.r, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  // Draw bullets
-  ctx.fillStyle = '#ffff00';
-  for (const b of bullets) {
-    ctx.beginPath();
-    ctx.arc(b.x, b.y, 4, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  // Draw player
-  ctx.fillStyle = '#1e90ff';
-  ctx.beginPath();
-  ctx.arc(player.x, player.y, player.r, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Draw crosshair
-  ctx.strokeStyle = 'white';
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(mouse.x - 10, mouse.y);
-  ctx.lineTo(mouse.x + 10, mouse.y);
-  ctx.moveTo(mouse.x, mouse.y - 10);
-  ctx.lineTo(mouse.x, mouse.y + 10);
-  ctx.stroke();
+function render() {
+  renderer.render(scene, camera);
 }
 
-let lastTime = Date.now();
-function gameLoop() {
-  const now = Date.now();
-  const dt = Math.min((now - lastTime) / 1000, 0.016);
-  lastTime = now;
-
-  update(dt);
-  draw();
-  requestAnimationFrame(gameLoop);
-}
-
-window.addEventListener('resize', () => {
-  width = canvas.width = window.innerWidth;
-  height = canvas.height = window.innerHeight;
+window.addEventListener('keydown', (event) => {
+  keys[event.key.toLowerCase()] = true;
+  if (event.key.toLowerCase() === 'q') buildWall();
+  if (event.key === 'Escape') {
+    document.exitPointerLock();
+    mouse.locked = false;
+  }
 });
 
+window.addEventListener('keyup', (event) => {
+  keys[event.key.toLowerCase()] = false;
+});
+
+renderer.domElement.addEventListener('click', () => {
+  renderer.domElement.requestPointerLock();
+});
+
+document.addEventListener('pointerlockchange', () => {
+  mouse.locked = document.pointerLockElement === renderer.domElement;
+});
+
+document.addEventListener('mousemove', (event) => {
+  if (!mouse.locked) return;
+  yaw -= event.movementX * 0.002;
+  pitch -= event.movementY * 0.002;
+  pitch = Math.max(-1.4, Math.min(1.4, pitch));
+});
+
+renderer.domElement.addEventListener('mousedown', () => {
+  mouse.down = true;
+});
+
+window.addEventListener('mouseup', () => {
+  mouse.down = false;
+});
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+spawnEnemies();
 updateUI();
-gameLoop();
+
+let lastTime = performance.now();
+function animate() {
+  requestAnimationFrame(animate);
+  const now = performance.now();
+  const dt = Math.min((now - lastTime) / 1000, 0.033);
+  lastTime = now;
+  update(dt);
+  render();
+}
+animate();
